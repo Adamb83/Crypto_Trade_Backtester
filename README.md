@@ -49,27 +49,14 @@ Apply Crypto_Trade_Backtest.py to identify strategies that are likely to general
 Historical Data Retrieval:
 Fetch and save data for backtesting with Get_Historical_Data.py.
 
-Customizable Settings:
-Fine-tune random iteration settings.
-
-Example Workflows
-1. Optimize for a Single Asset
-
+Backtest for Single Asset Optimization:
+Use Crypto_Trade_Backtest_Overfit.py to analyze and optimize strategies for a specific asset. Results will be the most overfitted settings.
 Run Get_Historical_Data.py to fetch historical data.
 Use Crypto_Trade_Backtest_Overfit.py to determine the most profitable settings for a specific coin.
-2. Test Robustness Across Assets
 
-Fetch data using Get_Historical_Data.py.
-Run Crypto_Trade_Backtest.py to evaluate strategies across multiple coins and random intervals.
-3. Prepare Historical Data
-
-Use Get_Historical_Data.py to retrieve data for up to 300 coins and store it locally in CSV format.
-
-Backtest for Single Asset Optimization:
-Use Crypto_Trade_Backtest_Overfit.py to analyze and optimize strategies for a specific asset.
-
-Run Randomized Interval Backtesting:
-Run Crypto_Trade_Backtest.py to test strategies across multiple coins and random time intervals.
+Run Crypto_Trade_Backtest.py to evaluate strategies across multiple coins (100's) and random intervals.
+Run Randomized Interval Backtesting across any number of coins, however many are in the dir it will use. 
+End result is the opposite of an overfitted strategy, you get the best settings across all assets tested.
 
 Fun learnings with these!
 
