@@ -3,11 +3,13 @@ A Python-based framework for back testing and optimizing cryptocurrency trading 
 
 Trade Logic is super simple ready to build on to.
 Buying when the short moving average crosses above the long moving average, provided the RSI is below a specified threshold and selling when the short moving average crosses below the long moving average.
-So trend following/swing trade framework.
+So trend following/swing trade framework. 
 
-File Overview
+It needs addition of Supertrend, Drawdown, Sharpe ratio, Buy N Hold Comaparison and few other bits and bobs..
+
+
 1. Get_Historical_Data.py
-Purpose:
+
 Retrieves and saves historical OHLC data for cryptocurrencies.
 Key Features:
 Fetches data for up to 300 coins by default.
@@ -17,7 +19,7 @@ Use Case:
 Prepares historical price data for use in the backtesting scripts.
 
 3. Crypto_Trade_Backtest_Overfit.py
-Purpose:
+
 Identifies the most profitable trading strategy for a single cryptocurrency asset.
 Key Features:
 Implements moving averages (SMA, EMA) and RSI as trading indicators.
@@ -27,14 +29,14 @@ Use Case:
 Ideal for detailed optimization of a single coin, though results may be overfitted to the historical data.
 
 5. Crypto_Trade_Backtest.py
-Purpose:
+
 Tests trading strategies across multiple cryptocurrencies using randomized intervals to improve robustness.
 Key Features:
 Implements Randomized Interval Backtesting, which selects random start and end times for testing.
 Evaluates strategy performance over multiple iterations to identify robust configurations.
 Combines results across all tested coins to rank the best-performing settings.
 Outputs aggregated results and ranked strategies based on profitability.
-Use Case:
+
 Designed to find strategies that perform well across a range of conditions and multiple assets.
 Highlights
 Multi-Coin Backtesting:
