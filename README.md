@@ -1,4 +1,4 @@
-Crypto_Trade_Backtester
+Crypto_Trade_Backtest.py
 A Python-based framework for back testing and optimizing cryptocurrency trading strategies using historical data.
 
 Trade Logic is super simple at present and ready to build on.
