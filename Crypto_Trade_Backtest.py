@@ -23,7 +23,7 @@ from multiprocessing import Pool, cpu_count
 import tqdm
 
 # User-configurable parameters
-MA_LENGTHS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 120, 240, 480, 960, 1440, 2880, 4320]
+MA_LENGTHS = [5, 10, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 240, 960, 1440, 2880]
 TAKE_PROFIT_PERCENTAGES = [5, 10, 15, 20, 50, 75, 100, 150]  # Fixed TP percentages
 PARTIAL_SELL_PERCENTAGES = [10, 20, 50, 75]  # Percentages to sell at TP
 TRADING_FEES_PERCENT = 0.1  # Adjustable trading fees
