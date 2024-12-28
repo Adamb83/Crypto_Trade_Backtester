@@ -49,6 +49,8 @@ def backtest_combination(params):
     balance = 1000
     position = 0  # BTC holdings
     trades = []
+    entry_price = None  # Initialize outside the loop
+
     for i in range(max(short_ma_length, long_ma_length), len(data)):
         if pd.notna(data[f"short_ma"].iloc[i]) and pd.notna(data[f"long_ma"].iloc[i]):
             if position == 0 and data[f"short_ma"].iloc[i] > data[f"long_ma"].iloc[i] and data[f"short_ma"].iloc[i - 1] <= data[f"long_ma"].iloc[i - 1]:
@@ -64,15 +66,23 @@ def backtest_combination(params):
                 current_price = data["close"].iloc[i]
                 sell_portion = 0
                 for percent in PARTIAL_SELL_PERCENTAGES:
-                    if current_price >= entry_price * (1 + (tp_percent * percent / 100) / 100):
-                        exit_price = current_price * (1 - SLIPPAGE_PERCENT / 100)
-                        fee = exit_price * position * (percent / 100) * TRADING_FEES_PERCENT / 100
-                        balance += (position * (percent / 100) * exit_price) - fee
-                        sell_portion += (percent / 100)
-                        trades.append({"action": f"partial_sell_{percent}%", "price": exit_price, "fee": fee, "timestamp": data["timestamp"].iloc[i]})
+                    tp_target = entry_price * (1 + tp_percent / 100)
+                if current_price >= entry_price * (1 + tp_percent / 100):
+                    exit_price = current_price * (1 - SLIPPAGE_PERCENT / 100)
+                    sell_amount = position * (partial_sell / 100)  # Use partial_sell directly
+                    fee = exit_price * sell_amount * TRADING_FEES_PERCENT / 100
+                    balance += (sell_amount * exit_price) - fee
+                    position -= sell_amount  # Reduce the position
+                    trades.append({
+                        "action": f"partial_sell_{partial_sell}%",
+                        "price": exit_price,
+                        "fee": fee,
+                        "remaining_position": position,
+                        "balance": balance,
+                        "timestamp": data["timestamp"].iloc[i]
+                    })
 
-                # Update remaining position
-                position *= (1 - sell_portion)
+
 
                 # Final sell logic
                 if data[f"short_ma"].iloc[i] < data[f"long_ma"].iloc[i] and data[f"short_ma"].iloc[i - 1] >= data[f"long_ma"].iloc[i - 1]:
@@ -90,7 +100,7 @@ def backtest_combination(params):
         trades.append({"action": "sell (final)", "price": exit_price, "fee": fee, "timestamp": data["timestamp"].iloc[-1]})
 
     total_pnl = balance - 1000
-    max_drawdown = min([trade['price'] for trade in trades if trade['action'] == 'buy'], default=0) - max([trade['price'] for trade in trades if trade['action'].startswith('sell')], default=0)
+    max_drawdown = calculate_max_drawdown(trades)
 
     return {
         "short_ma": short_ma_type,
@@ -105,6 +115,18 @@ def backtest_combination(params):
         "trades": trades,
     }
 
+def calculate_max_drawdown(trades):
+    """Calculate max drawdown from trade data."""
+    if not trades:
+        return 0
+
+    buy_prices = [trade['price'] for trade in trades if trade['action'] == 'buy']
+    sell_prices = [trade['price'] for trade in trades if trade['action'].startswith('sell')]
+    if not buy_prices or not sell_prices:
+        return 0
+
+    return min(buy_prices) - max(sell_prices)
+
 def run_optimization(data, coin_name):
     """Run optimization using multiprocessing."""
     combinations = []
@@ -116,8 +138,8 @@ def run_optimization(data, coin_name):
                 combinations.append((data, short_ma_type, short_ma_length, long_ma_type, long_ma_length, tp_percent, partial_sell))
 
     # Use tqdm for a progress bar
+    results = []
     with Pool(CPU_CORE_LIMIT) as pool:
-        results = []
         for result in tqdm.tqdm(pool.imap_unordered(backtest_combination, combinations), total=len(combinations)):
             result["coin"] = coin_name
             results.append(result)
@@ -182,7 +204,11 @@ def aggregate_overall_results():
 
 def main():
     """Main function to load data and run optimization."""
-    iterations = int(input("Enter the number of random sampling iterations per coin: "))
+    try:
+        iterations = int(input("Enter the number of random sampling iterations per coin: "))
+    except ValueError:
+        print("[ERROR] Invalid number of iterations. Please enter a valid integer.")
+        return
 
     for file in os.listdir(COIN_CSV_DIR):
         if file.endswith(".csv"):
