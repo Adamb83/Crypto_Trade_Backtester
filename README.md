@@ -5,6 +5,7 @@ Crypto_Trade_Backtest.py  Uses multiprocessing to test many different parameters
 
 Crypto_Trade_Backtest.py will be modified to include the logic of Backtest_MA_Crossover.py 
 
+Crypto_Trade_Backtest_Overfitted.py Generates the most overfitted MA cross just for research and ideas.
 
 
 
