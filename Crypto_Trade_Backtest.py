@@ -30,7 +30,7 @@ OUTPUT_DIR = "D:/Process_wallet_data/Backtest/"
 MA_LENGTHS = [14, 18, 22, 26, 30, 38, 40, 42]
 REENTRY_GAP_VALUES = [10, 12, 15]
 
-# --- Fixed Strategy Parameters (from your trading bot) ---
+# --- Fixed Strategy Parameters ---
 POSITION_SIZE_PERCENT = 7.5        # percent of available balance
 SLIPPAGE = 0.0005
 FEE_RATE = 0.001
@@ -115,7 +115,7 @@ def simulate_strategy(data, params):
                 if partial_plan["steps_left"] == 0:
                     partial_plan["active"] = False
 
-        # --- Step 2: (Removed Take-Profit Check) ---
+       
 
         # --- Step 3: Crossdown Check ---
         if i > start_index:
@@ -290,7 +290,7 @@ def main():
                         data.rename(columns={"close_price": "close"}, inplace=True)
                     else:
                         raise ValueError("CSV missing required column: 'close'")
-                # Parse the timestamp column (using dayfirst=True based on your sample format)
+                # Parse the timestamp column (using dayfirst=True based on sample format)
                 data["timestamp"] = pd.to_datetime(data["timestamp"], dayfirst=True, errors="coerce")
                 data.sort_values(by="timestamp", inplace=True)
                 run_random_iterations(data, coin_name)
