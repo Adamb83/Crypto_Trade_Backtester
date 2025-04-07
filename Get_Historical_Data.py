@@ -1,146 +1,79 @@
-# Get_Historical_Data.py
-# Copyright (C) 2024 Adam P Baguley
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License Version 3 as published by
-# the Free Software Foundation.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU General Public License Version 3 for more details.
-#https://www.gnu.org/licenses/.
-
 import requests
 import pandas as pd
-from time import sleep
-from pytz import UTC
+from datetime import datetime
+import time
+import os
 
-# Binance API details
-INTERVAL = "4h"
-MAX_LIMIT = 1000
+# Set the save directory
+SAVE_DIR = "D:/Historic_prices/hour/"  # Replace with your desired path
 
-# Output CSV base directory
-OUTPUT_DIR = "D:/Historic_prices/"
+# Ensure the directory exists
+os.makedirs(SAVE_DIR, exist_ok=True)
 
-# Moving average and RSI parameters
-MA_LENGTHS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 120, 240]
-RSI_PERIODS = [3, 7, 14, 21]
-
-def fetch_top_usdt_pairs(limit=300):
-    """Fetch the top USDT pairs by volume."""
-    url = "https://api.binance.com/api/v3/ticker/24hr"
-    response = requests.get(url)
-    if response.status_code == 200:
-        tickers = response.json()
-        usdt_pairs = [
-            ticker["symbol"] for ticker in tickers
-            if "USDT" in ticker["symbol"] and not ticker["symbol"].endswith("DOWNUSDT") and not ticker["symbol"].endswith("UPUSDT")
-        ]
-        return usdt_pairs[:limit]
-    else:
-        raise Exception(f"Failed to fetch tickers: {response.status_code}, {response.text}")
-
-def fetch_historical_data(symbol, interval, start_time=None, end_time=None):
-    """Fetch historical data from Binance API."""
-    url = "https://api.binance.com/api/v3/klines"
-    params = {
-        "symbol": symbol,
-        "interval": interval,
-        "limit": MAX_LIMIT,
-        "startTime": int(start_time.timestamp() * 1000) if start_time else None,
-        "endTime": int(end_time.timestamp() * 1000) if end_time else None
-    }
-
-    response = requests.get(url, params=params)
-    if response.status_code == 200:
-        return response.json()
-    else:
-        raise Exception(f"Failed to fetch data: {response.status_code}, {response.text}")
-
-def process_data(raw_data):
-    """Convert raw data to a DataFrame and process timestamps."""
-    columns = [
-        "timestamp", "open", "high", "low", "close", "volume",
-        "close_time", "quote_asset_volume", "number_of_trades",
-        "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"
+# Fetch all available USDT spot trading pairs
+def fetch_all_spot_pairs():
+    url = "https://api.binance.com/api/v3/exchangeInfo"
+    response = requests.get(url).json()
+    spot_pairs = [
+        symbol["symbol"]
+        for symbol in response["symbols"]
+        if symbol["status"] == "TRADING" and symbol["quoteAsset"] == "USDT"
     ]
-    df = pd.DataFrame(raw_data, columns=columns)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-    df["close_time"] = pd.to_datetime(df["close_time"], unit="ms", utc=True)
+    return spot_pairs
 
-    # Convert numeric columns
-    numeric_cols = ["open", "high", "low", "close", "volume", "quote_asset_volume",
-                    "taker_buy_base_volume", "taker_buy_quote_volume"]
-    df[numeric_cols] = df[numeric_cols].astype(float)
-
-    return df.drop(columns=["ignore"], errors="ignore")
-
-def calculate_indicators(data):
-    """Calculate SMA, EMA, and RSI indicators."""
-    # Calculate SMAs and EMAs
-    for length in MA_LENGTHS:
-        data[f"sma_{length}"] = data["close"].rolling(window=length).mean()
-        data[f"ema_{length}"] = data["close"].ewm(span=length, adjust=False).mean()
-
-    # Calculate RSIs
-    for period in RSI_PERIODS:
-        delta = data["close"].diff()
-        gain = delta.where(delta > 0, 0).rolling(window=period).mean()
-        loss = -delta.where(delta < 0, 0).rolling(window=period).mean()
-        rs = gain / loss
-        data[f"rsi_{period}"] = 100 - (100 / (1 + rs))
-
-    return data
-
-def save_to_csv(data, symbol, interval):
-    """Save processed data to a CSV file."""
-    filename = f"{OUTPUT_DIR}historic_{symbol.lower()}_{interval}.csv"
-    data.to_csv(filename, index=False)
-    print(f"[INFO] Data saved to {filename}")
-
-def fetch_and_save_full_history(symbol, interval):
-    """Fetch full historical data and save with indicators."""
-    print(f"[INFO] Fetching full history for {symbol} at {interval} interval...")
+# Fetch historical 1-hour data for a given symbol between start_date and end_date
+def fetch_historical_data(symbol, start_date, end_date, interval="1h"):
+    url = "https://api.binance.com/api/v3/klines"
+    # Convert dates to milliseconds timestamps
+    start_time = int(datetime.strptime(start_date, "%Y-%m-%d").timestamp() * 1000)
+    end_time = int(datetime.strptime(end_date, "%Y-%m-%d").timestamp() * 1000)
+    
     all_data = []
-    end_time = None
+    while start_time < end_time:
+        params = {
+            "symbol": symbol,
+            "interval": interval,
+            "startTime": start_time,
+            "limit": 1000,
+        }
+        response = requests.get(url, params=params).json()
+        if isinstance(response, list) and response:
+            all_data.extend(response)
+            start_time = response[-1][0] + 1  # Move to the next batch
+        else:
+            break  # No more data
+        time.sleep(0.1)  # Avoid hitting rate limits
 
-    while True:
+    # Convert to DataFrame with Binance's kline columns
+    df = pd.DataFrame(all_data, columns=[
+        "Open time", "Open", "High", "Low", "Close", "Volume",
+        "Close time", "Quote asset volume", "Number of trades",
+        "Taker buy base asset volume", "Taker buy quote asset volume", "Ignore"
+    ])
+    # Convert "Open time" to datetime
+    df["Open time"] = pd.to_datetime(df["Open time"], unit="ms")
+    return df
+
+# Download historical data for all USDT pairs in 1-hour timeframe
+def download_data_for_usdt_pairs():
+    pairs = fetch_all_spot_pairs()
+    start_date = "2017-01-01"  # Binance's earliest possible date
+    end_date = datetime.now().strftime("%Y-%m-%d")  # Today's date
+
+    for pair in pairs:
+        print(f"Downloading data for {pair} (1-hour timeframe)...")
         try:
-            raw_data = fetch_historical_data(symbol, interval, end_time=end_time)
-            if not raw_data or len(raw_data) == 1:  # Break if no data or repetitive single-row fetch
-                print("[INFO] No more data to fetch. Ending.")
-                break
-
-            df = process_data(raw_data)
-            all_data.append(df)
-
-            # Update end_time to the earliest timestamp in the current batch minus 1 ms
-            end_time = df["timestamp"].iloc[0] - pd.Timedelta(milliseconds=1)
-
-            print(f"[INFO] Fetched {len(df)} rows, continuing...")
-            sleep(1)  # Prevent rate-limiting
+            df = fetch_historical_data(symbol=pair, start_date=start_date, end_date=end_date, interval="1h")
+            if not df.empty:
+                file_path = os.path.join(SAVE_DIR, f"{pair}_1h_data.csv")
+                df.to_csv(file_path, index=False)
+                print(f"Data for {pair} saved to {file_path}.")
+            else:
+                print(f"No data available for {pair}.")
         except Exception as e:
-            print(f"[ERROR] {e}")
-            break
-
-    if all_data:
-        final_data = pd.concat(all_data).drop_duplicates(subset="timestamp").sort_values(by="timestamp")
-        final_data = calculate_indicators(final_data)
-        save_to_csv(final_data, symbol, interval)
-    else:
-        print("[INFO] No data fetched.")
-
-
-def main():
-    try:
-        usdt_pairs = fetch_top_usdt_pairs(limit=300)
-        print(f"[INFO] Fetched {len(usdt_pairs)} USDT pairs.")
-        for pair in usdt_pairs:
-            fetch_and_save_full_history(pair, INTERVAL)
-    except Exception as e:
-        print(f"[ERROR] {e}")
+            print(f"Error downloading data for {pair}: {e}")
+        time.sleep(1)  # Pause to avoid rate limits
 
 if __name__ == "__main__":
-    main()
-#This Works 
+    print(f"Data will be saved to: {SAVE_DIR}")
+    download_data_for_usdt_pairs()
