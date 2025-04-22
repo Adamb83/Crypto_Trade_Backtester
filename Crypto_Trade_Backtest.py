@@ -1,4 +1,3 @@
-
 # Crypto_Trade_Backtest.py
 # Copyright (C) 2024 Adam P Baguley
 #
@@ -22,27 +21,25 @@ import numpy as np
 
 # --- Directory Settings ---
 COIN_CSV_DIR = "D:/Historic_prices/hour/"
-OUTPUT_DIR = "D:/Process_wallet_data/Backtest/"
+OUTPUT_DIR   = "D:/Historic_prices/hour/"
 
 # --- Candidate Parameters for Optimization ---
-# Vary the lengths for the three EMAs and the reentry gap percentage.
-# Only combinations where short_ma < mid_ma < long_ma are used.
-MA_LENGTHS = [14, 18, 22, 26, 30, 38, 40, 42]
-REENTRY_GAP_VALUES = [10, 12, 15]
+MA_LENGTHS         = [14, 18, 22, 26, 30, 38, 40, 42, 50, 100, 150, 200]
+REENTRY_GAP_VALUES = [7, 10, 12, 15, 20]
 
 # --- Fixed Strategy Parameters ---
-POSITION_SIZE_PERCENT = 7.5        # percent of available balance
-SLIPPAGE = 0.0005
-FEE_RATE = 0.001
-ACCUMULATION_STEPS = 2
-PRICE_THRESHOLD = 0.01             # minimal price change in percent
-MAX_OPEN_TRADES = 15
+POSITION_SIZE_PERCENT       = 7.5
+SLIPPAGE                    = 0.0005
+FEE_RATE                    = 0.001
+ACCUMULATION_STEPS          = 2
+PRICE_THRESHOLD             = 0.01
+MAX_OPEN_TRADES             = 15
 CLOSE_PROFIT_BUFFER_PERCENT = 5
-MA_TYPE = "ema"                    # using EMA for moving averages
+MA_TYPE                     = "ema"
 
-INITIAL_BALANCE = 1000.0           # starting portfolio balance (USDT)
-MIN_PERIOD_DAYS = 365              # minimum period of 12 months (in days)
-ITERATIONS_PER_COIN = 3            # run 3 iterations per CSV
+INITIAL_BALANCE    = 1000.0
+MIN_PERIOD_DAYS    = 365
+ITERATIONS_PER_COIN = 10
 
 # --- Utility Function: Calculate Moving Average ---
 def calculate_ma(series, window, ma_type):
@@ -53,250 +50,180 @@ def calculate_ma(series, window, ma_type):
     else:
         raise ValueError("ma_type must be 'sma' or 'ema'")
 
-# --- Simulation Function ---
+# --- Strategy Simulation ---
 def simulate_strategy(data, params):
-    """
-    Simulate the trading strategy over the given DataFrame (data) using a particular combination of settings.
-    params: (short_ma_length, mid_ma_length, long_ma_length, reentry_gap)
-    """
     short_ma_length, mid_ma_length, long_ma_length, reentry_gap = params
-
     data = data.copy()
-    # Calculate the three EMAs using the 'close' column
     data["short_ma"] = calculate_ma(data["close"], short_ma_length, MA_TYPE)
-    data["mid_ma"] = calculate_ma(data["close"], mid_ma_length, MA_TYPE)
-    data["long_ma"] = calculate_ma(data["close"], long_ma_length, MA_TYPE)
+    data["mid_ma"]   = calculate_ma(data["close"], mid_ma_length, MA_TYPE)
+    data["long_ma"]  = calculate_ma(data["close"], long_ma_length, MA_TYPE)
 
-    balance = INITIAL_BALANCE
-    open_positions = []   # list of active positions
+    balance, open_positions = INITIAL_BALANCE, []
     partial_plan = {"active": False, "steps_left": 0, "remaining_value": 0.0}
-    trades = []           # record of executed trades (optional)
-
-    # Start simulation from an index where all MAs are available
+    trades = []
     start_index = max(short_ma_length, mid_ma_length, long_ma_length)
-    
+
     for i in range(start_index, len(data)):
-        current_row = data.iloc[i]
-        current_price = current_row["close"]
-        timestamp = current_row["timestamp"]
-        short_ma_curr = current_row["short_ma"]
-        mid_ma_curr = current_row["mid_ma"]
-        long_ma_curr = current_row["long_ma"]
+        row = data.iloc[i]
+        price, prev_price = row["close"], data.iloc[i-1]["close"]
+        price_diff = (price - prev_price) / prev_price * 100
 
-        # Calculate price difference from previous candle (in %)
-        prev_close = data.iloc[i-1]["close"]
-        price_diff = ((current_price - prev_close) / prev_close) * 100
-
-        # --- Step 1: Execute Partial Accumulation if Active ---
+        # Partial accumulation
         if partial_plan["active"] and partial_plan["steps_left"] > 0:
-            step_value = partial_plan["remaining_value"] / partial_plan["steps_left"]
-            if step_value > balance:
-                step_value = balance
-            if step_value > 0:
-                actual_buy_price = current_price * (1 + SLIPPAGE)
-                fee = step_value * FEE_RATE
-                if (step_value + fee) > balance:
-                    step_value = balance / (1 + FEE_RATE)
-                    fee = step_value * FEE_RATE
-                size = step_value / actual_buy_price
-                trade = {
-                    "timestamp_open": timestamp,
-                    "buy_price": current_price,
-                    "effective_buy_price": actual_buy_price,
-                    "size": size,
-                    "buy_fee": fee,
-                    "params": params
-                }
-                open_positions.append(trade)
-                trades.append({"action": "buy", "price": current_price, "size": size, "timestamp": timestamp})
-                balance -= (step_value + fee)
-                partial_plan["remaining_value"] -= step_value
+            value = min(partial_plan["remaining_value"] / partial_plan["steps_left"], balance)
+            if value > 0:
+                buy_price = price * (1 + SLIPPAGE)
+                fee = value * FEE_RATE
+                size = value / buy_price
+                open_positions.append({"price": price, "size": size})
+                trades.append({"action": "buy", "price": price, "size": size})
+                balance -= (value + fee)
+                partial_plan["remaining_value"] -= value
                 partial_plan["steps_left"] -= 1
                 if partial_plan["steps_left"] == 0:
                     partial_plan["active"] = False
 
-       
+        # Crossdown exit
+        prev_row = data.iloc[i-1]
+        if pd.notna(row["short_ma"]) and pd.notna(row["mid_ma"]):
+            if row["short_ma"] < row["mid_ma"] and prev_row["short_ma"] >= prev_row["mid_ma"]:
+                partial_plan = {"active": False, "steps_left": 0, "remaining_value": 0.0}
+                for pos in open_positions.copy():
+                    profit_pct = (price - pos["price"]) / pos["price"] * 100
+                    if profit_pct > CLOSE_PROFIT_BUFFER_PERCENT:
+                        sell_price = price * (1 - SLIPPAGE)
+                        proceeds = pos["size"] * sell_price
+                        fee = proceeds * FEE_RATE
+                        balance += (proceeds - fee)
+                        trades.append({"action": "sell_crossdown", "price": price, "size": pos["size"]})
+                        open_positions.remove(pos)
 
-        # --- Step 3: Crossdown Check ---
-        if i > start_index:
-            prev_short_ma = data.iloc[i-1]["short_ma"]
-            prev_mid_ma = data.iloc[i-1]["mid_ma"]
-            if pd.notna(short_ma_curr) and pd.notna(mid_ma_curr) and pd.notna(prev_short_ma) and pd.notna(prev_mid_ma):
-                cross_down = (short_ma_curr < mid_ma_curr) and (prev_short_ma >= prev_mid_ma)
-                if cross_down:
-                    if partial_plan["active"]:
-                        partial_plan = {"active": False, "steps_left": 0, "remaining_value": 0.0}
-                    for pos in open_positions.copy():
-                        profit_percent = ((current_price - pos["buy_price"]) / pos["buy_price"]) * 100
-                        if profit_percent > CLOSE_PROFIT_BUFFER_PERCENT:
-                            actual_sell_price = current_price * (1 - SLIPPAGE)
-                            proceeds = pos["size"] * actual_sell_price
-                            fee_sell = proceeds * FEE_RATE
-                            balance += (proceeds - fee_sell)
-                            trades.append({"action": "sell_crossdown", "price": current_price, "size": pos["size"], "timestamp": timestamp})
-                            open_positions.remove(pos)
-
-        # --- Step 4: Entry Condition & Reentry Gap Check ---
-        if pd.notna(short_ma_curr) and pd.notna(mid_ma_curr) and pd.notna(long_ma_curr):
-            if (short_ma_curr > long_ma_curr) and (mid_ma_curr > long_ma_curr) and (price_diff > PRICE_THRESHOLD) and (len(open_positions) < MAX_OPEN_TRADES):
+        # Entry condition
+        if pd.notna(row["long_ma"]):
+            if row["short_ma"] > row["long_ma"] and row["mid_ma"] > row["long_ma"] and price_diff > PRICE_THRESHOLD and len(open_positions) < MAX_OPEN_TRADES:
                 can_buy = True
-                if open_positions:
-                    last_buy_price = open_positions[-1]["buy_price"]
-                    needed_price = last_buy_price * (1 - reentry_gap / 100.0)
-                    if current_price > needed_price:
-                        can_buy = False
+                if open_positions and price > open_positions[-1]["price"] * (1 - reentry_gap/100):
+                    can_buy = False
                 if can_buy and not partial_plan["active"] and balance > 0:
-                    trade_value = balance * (POSITION_SIZE_PERCENT / 100.0)
-                    partial_plan = {"active": True, "steps_left": ACCUMULATION_STEPS, "remaining_value": trade_value}
+                    partial_plan = {"active": True, "steps_left": ACCUMULATION_STEPS, "remaining_value": balance * (POSITION_SIZE_PERCENT/100)}
 
-    # --- End of Simulation: Liquidate Any Remaining Positions ---
+    # Liquidate
     if open_positions:
         final_price = data.iloc[-1]["close"] * (1 - SLIPPAGE)
         for pos in open_positions:
             proceeds = pos["size"] * final_price
-            fee_sell = proceeds * FEE_RATE
-            balance += (proceeds - fee_sell)
-            trades.append({"action": "sell_final", "price": data.iloc[-1]["close"], "size": pos["size"], "timestamp": data.iloc[-1]["timestamp"]})
+            fee = proceeds * FEE_RATE
+            balance += (proceeds - fee)
+            trades.append({"action": "sell_final", "price": final_price, "size": pos["size"]})
 
-    total_pnl = balance - INITIAL_BALANCE
-    return {
-        "short_ma_length": short_ma_length,
-        "mid_ma_length": mid_ma_length,
-        "long_ma_length": long_ma_length,
-        "reentry_gap": reentry_gap,
-        "final_balance": balance,
-        "total_pnl": total_pnl,
-        "num_trades": len(trades)
-    }
+    return {"short_ma_length": short_ma_length, "mid_ma_length": mid_ma_length,
+            "long_ma_length": long_ma_length, "reentry_gap": reentry_gap,
+            "final_balance": balance,
+            "total_pnl": balance - INITIAL_BALANCE,
+            "num_trades": len(trades)}
 
-# --- Top-Level Helper for Multiprocessing ---
+# --- Multiprocessing Wrapper ---
 def simulate_strategy_wrapper(args):
-    data_sample, params = args
-    return simulate_strategy(data_sample, params)
+    return simulate_strategy(*args)
 
-# --- Optimization Over Parameter Grid ---
-def run_optimization(data_sample, coin_name):
-    combinations = []
-    for short in MA_LENGTHS:
-        for mid in MA_LENGTHS:
-            for long in MA_LENGTHS:
-                if not (short < mid < long):
-                    continue
-                for reentry_gap in REENTRY_GAP_VALUES:
-                    combinations.append((short, mid, long, reentry_gap))
-    results = []
-    cpu_core_limit = min(19, cpu_count())
-    args_list = [(data_sample, params) for params in combinations]
-    with Pool(cpu_core_limit) as pool:
-        for result in tqdm.tqdm(pool.imap_unordered(simulate_strategy_wrapper, args_list),
-                                total=len(combinations)):
-            result["coin"] = coin_name
-            results.append(result)
-    return pd.DataFrame(results)
-
-# --- Helper: Get a Random Data Sample with at Least 12 Months ---
+# --- Random Sample Fetcher ---
 def get_random_sample(data):
     n = len(data)
-    if n < 2:
-        return None
-    start_idx = random.randint(0, n - 2)
-    start_time = data.iloc[start_idx]["timestamp"]
-    min_end_time = start_time + pd.Timedelta(days=MIN_PERIOD_DAYS)
-    end_idx = None
-    for j in range(start_idx + 1, n):
-        if data.iloc[j]["timestamp"] >= min_end_time:
-            end_idx = j
-            break
-    if end_idx is None:
-        return None
-    end_idx = random.randint(end_idx, n - 1)
-    sample = data.iloc[start_idx:end_idx + 1].copy().reset_index(drop=True)
-    return sample
+    if n < 2: return None
+    si = random.randint(0, n-2)
+    st = data.iloc[si]["timestamp"]
+    min_end = st + pd.Timedelta(days=MIN_PERIOD_DAYS)
+    candidates = [j for j in range(si+1, n) if data.iloc[j]["timestamp"] >= min_end]
+    ei = random.randint(candidates[0], n-1) if candidates else random.randint(si+1, n-1)
+    return data.iloc[si:ei+1].copy().reset_index(drop=True)
 
-# --- Run Random Iterations for a Given Coin ---
+# --- Per‑Coin Iterations & Ranking ---
 def run_random_iterations(data, coin_name):
-    aggregated_results = []
-    for iteration in range(ITERATIONS_PER_COIN):
-        print(f"[INFO] Running iteration {iteration + 1}/{ITERATIONS_PER_COIN} for {coin_name}...")
+    records = []
+    for i in range(ITERATIONS_PER_COIN):
+        print(f"[INFO] Iter {i+1}/{ITERATIONS_PER_COIN} for {coin_name}")
         sample = get_random_sample(data)
         if sample is None or len(sample) < 100:
-            print(f"[WARN] Not enough data for iteration {iteration + 1} for {coin_name}. Skipping.")
+            print(f"[WARN] Skipping iter {i+1}, only {len(sample) if sample is not None else 0} rows")
             continue
-        print(f"[DEBUG] Sample from {sample.iloc[0]['timestamp']} to {sample.iloc[-1]['timestamp']} with {len(sample)} rows.")
-        df_results = run_optimization(sample, coin_name)
-        aggregated_results.extend(df_results.to_dict(orient="records"))
-    if aggregated_results:
-        aggregated_df = pd.DataFrame(aggregated_results)
-        aggregated_df.sort_values(by="final_balance", ascending=False, inplace=True)
-        aggregated_file = os.path.join(OUTPUT_DIR, f"aggregated_{coin_name}_performance.csv")
-        aggregated_df.to_csv(aggregated_file, index=False)
-        print(f"[INFO] Aggregated results for {coin_name} saved to {aggregated_file}.")
-        return aggregated_df
-    else:
-        print(f"[WARN] No aggregated results for {coin_name}.")
+        combos = [(sample, p) for p in product(MA_LENGTHS, MA_LENGTHS, MA_LENGTHS, REENTRY_GAP_VALUES) if p[0]<p[1]<p[2]]
+        with Pool(min(cpu_count(), 19)) as pool:
+            for r in tqdm.tqdm(pool.imap_unordered(simulate_strategy_wrapper, combos), total=len(combos)):
+                r['coin'] = coin_name
+                records.append(r)
+
+    if not records:
+        print(f"[WARN] No results for {coin_name}")
         return pd.DataFrame()
-
-# --- Aggregate Overall Results Across Coins ---
-def aggregate_overall_results():
-    all_results = []
-    for file in os.listdir(OUTPUT_DIR):
-        if file.startswith("aggregated_") and file.endswith("_performance.csv"):
-            file_path = os.path.join(OUTPUT_DIR, file)
-            try:
-                df = pd.read_csv(file_path, engine="python")
-                all_results.append(df)
-            except Exception as e:
-                print(f"[ERROR] Failed to read aggregated file {file_path}: {e}")
-    if not all_results:
-        print("[WARN] No aggregated results found.")
-        return
-    combined_results = pd.concat(all_results, ignore_index=True)
-    grouped_results = combined_results.groupby([
-        "short_ma_length", "mid_ma_length", "long_ma_length", "reentry_gap", "coin"
-    ]).agg(
-        total_final_balance=("final_balance", "sum"),
-        average_final_balance=("final_balance", "mean"),
-        total_pnl=("total_pnl", "sum"),
-        average_pnl=("total_pnl", "mean"),
-        num_trials=("final_balance", "count")
+    df = pd.DataFrame(records)
+    df['pct_gain'] = df['total_pnl']/INITIAL_BALANCE*100
+    pf = lambda g: g.loc[g['total_pnl']>0,'total_pnl'].sum() / -g.loc[g['total_pnl']<0,'total_pnl'].sum() if any(g['total_pnl']<0) else np.nan
+    summary = df.groupby(['short_ma_length','mid_ma_length','long_ma_length','reentry_gap']).apply(
+        lambda g: pd.Series({
+            'avg_pct_gain': g['pct_gain'].mean(),
+            'std_pct_gain': g['pct_gain'].std(),
+            'runs': len(g),
+            'avg_profit_factor': pf(g)
+        })
     ).reset_index()
-    grouped_results.sort_values(by="average_final_balance", ascending=False, inplace=True)
-    ranked_file = os.path.join(OUTPUT_DIR, "ranked_settings_performance.csv")
-    grouped_results.to_csv(ranked_file, index=False)
-    print(f"[INFO] Ranked settings saved to {ranked_file}")
-    print("[INFO] Top-performing settings:")
-    print(grouped_results.head(10))
+    top_gain = summary.sort_values('avg_pct_gain',ascending=False)
+    top_pf   = summary.sort_values('avg_profit_factor',ascending=False)
+    print(f"\n--- {coin_name} Top by Gain ---")
+    print(top_gain.head(10).to_string(index=False))
+    print(f"\n--- {coin_name} Top by PF ---")
+    print(top_pf.head(10).to_string(index=False))
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    summary.to_csv(os.path.join(OUTPUT_DIR,f"parameter_summary_{coin_name}.csv"),index=False)
+    pd.DataFrame(records).to_csv(os.path.join(OUTPUT_DIR,f"aggregated_{coin_name}_performance.csv"),index=False)
+    return df
 
-# --- Main Function ---
+# --- Overall Aggregation & Ranking ---
+def aggregate_overall_results():
+    files = [f for f in os.listdir(OUTPUT_DIR) if f.startswith('aggregated_') and f.endswith('_performance.csv')]
+    if not files:
+        print("[WARN] No aggregated files.")
+        return
+    df_list = []
+    for f in files:
+        try:
+            df_list.append(pd.read_csv(os.path.join(OUTPUT_DIR,f)))
+        except:
+            pass
+    combined = pd.concat(df_list,ignore_index=True)
+    combined['pct_gain'] = combined['total_pnl']/INITIAL_BALANCE*100
+    pf_all = lambda g: g.loc[g['total_pnl']>0,'total_pnl'].sum() / -g.loc[g['total_pnl']<0,'total_pnl'].sum() if any(g['total_pnl']<0) else np.nan
+    overall = combined.groupby(['short_ma_length','mid_ma_length','long_ma_length','reentry_gap']).agg(
+        avg_pct_gain=('pct_gain','mean'),
+        std_pct_gain=('pct_gain','std'),
+        runs=('pct_gain','count'),
+        avg_profit_factor=('total_pnl', lambda x: pf_all(combined.loc[x.index]))
+    ).reset_index()
+    print("\n=== Overall Top by Gain ===")
+    print(overall.sort_values('avg_pct_gain',ascending=False).head(10).to_string(index=False))
+    print("\n=== Overall Top by PF ===")
+    print(overall.sort_values('avg_profit_factor',ascending=False).head(10).to_string(index=False))
+    overall.to_csv(os.path.join(OUTPUT_DIR,'overall_parameter_ranking.csv'),index=False)
+
+# --- Main Execution: only raw data files ---
 def main():
-    if not os.path.exists(OUTPUT_DIR):
-        os.makedirs(OUTPUT_DIR)
+    os.makedirs(OUTPUT_DIR,exist_ok=True)
     for file in os.listdir(COIN_CSV_DIR):
-        if file.endswith(".csv"):
-            coin_name = file.replace(".csv", "")
-            print(f"[INFO] Processing {file} for coin {coin_name}...")
-            try:
-                data = pd.read_csv(os.path.join(COIN_CSV_DIR, file))
-                # Rename columns if needed
-                if "timestamp" not in data.columns:
-                    if "Open time" in data.columns:
-                        data.rename(columns={"Open time": "timestamp"}, inplace=True)
-                    elif "Timestamp" in data.columns:
-                        data.rename(columns={"Timestamp": "timestamp"}, inplace=True)
-                if "close" not in data.columns:
-                    if "Close" in data.columns:
-                        data.rename(columns={"Close": "close"}, inplace=True)
-                    elif "close_price" in data.columns:
-                        data.rename(columns={"close_price": "close"}, inplace=True)
-                    else:
-                        raise ValueError("CSV missing required column: 'close'")
-                # Parse the timestamp column (using dayfirst=True based on sample format)
-                data["timestamp"] = pd.to_datetime(data["timestamp"], dayfirst=True, errors="coerce")
-                data.sort_values(by="timestamp", inplace=True)
-                run_random_iterations(data, coin_name)
-            except Exception as e:
-                print(f"[ERROR] Failed to process {file}: {e}")
+        if not file.endswith('.csv'): continue
+        if file.startswith(('aggregated_','parameter_summary_','overall_parameter_ranking')): continue
+        coin = file.rsplit('.',1)[0]
+        print(f"[INFO] Processing {coin}...")
+        try:
+            df = pd.read_csv(os.path.join(COIN_CSV_DIR,file))
+            if 'timestamp' not in df.columns:
+                df.rename(columns={'Open time':'timestamp','Timestamp':'timestamp'},inplace=True)
+            if 'close' not in df.columns:
+                df.rename(columns={'Close':'close','close_price':'close'},inplace=True)
+            df['timestamp'] = pd.to_datetime(df['timestamp'],dayfirst=True,errors='coerce')
+            df.sort_values('timestamp',inplace=True)
+            run_random_iterations(df,coin)
+        except Exception as e:
+            print(f"[ERROR] {coin}: {e}")
     aggregate_overall_results()
 
-if __name__ == "__main__":
+if __name__=='__main__':
     main()
