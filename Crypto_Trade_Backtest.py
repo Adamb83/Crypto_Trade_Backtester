@@ -65,7 +65,8 @@ def simulate_strategy(data, params):
 
     for i in range(start_index, len(data)):
         row = data.iloc[i]
-        price, prev_price = row["close"], data.iloc[i-1]["close"]
+        prev_row = data.iloc[i-1]
+        price, prev_price = row["close"], prev_row["close"]
         price_diff = (price - prev_price) / prev_price * 100
 
         # Partial accumulation
@@ -84,7 +85,6 @@ def simulate_strategy(data, params):
                     partial_plan["active"] = False
 
         # Crossdown exit
-        prev_row = data.iloc[i-1]
         if pd.notna(row["short_ma"]) and pd.notna(row["mid_ma"]):
             if row["short_ma"] < row["mid_ma"] and prev_row["short_ma"] >= prev_row["mid_ma"]:
                 partial_plan = {"active": False, "steps_left": 0, "remaining_value": 0.0}
@@ -98,16 +98,21 @@ def simulate_strategy(data, params):
                         trades.append({"action": "sell_crossdown", "price": price, "size": pos["size"]})
                         open_positions.remove(pos)
 
-        # Entry condition
-        if pd.notna(row["long_ma"]):
-            if row["short_ma"] > row["long_ma"] and row["mid_ma"] > row["long_ma"] and price_diff > PRICE_THRESHOLD and len(open_positions) < MAX_OPEN_TRADES:
+        # Entry condition: strict cross-up (short > mid > long)
+        if pd.notna(row["short_ma"]) and pd.notna(row["mid_ma"]) and pd.notna(row["long_ma"]):
+            if (row["short_ma"] > row["mid_ma"] > row["long_ma"]
+                and price_diff > PRICE_THRESHOLD
+                and len(open_positions) < MAX_OPEN_TRADES):
                 can_buy = True
+                # prevent reentry too soon
                 if open_positions and price > open_positions[-1]["price"] * (1 - reentry_gap/100):
                     can_buy = False
                 if can_buy and not partial_plan["active"] and balance > 0:
-                    partial_plan = {"active": True, "steps_left": ACCUMULATION_STEPS, "remaining_value": balance * (POSITION_SIZE_PERCENT/100)}
+                    partial_plan = {"active": True,
+                                    "steps_left": ACCUMULATION_STEPS,
+                                    "remaining_value": balance * (POSITION_SIZE_PERCENT/100)}
 
-    # Liquidate
+    # Liquidate at final bar
     if open_positions:
         final_price = data.iloc[-1]["close"] * (1 - SLIPPAGE)
         for pos in open_positions:
